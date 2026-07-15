@@ -1,11 +1,12 @@
 import threading
 import customtkinter as ctk
 from core.theme import (
-    COLOR_BACKGROUND, COLOR_SIDEBAR_BG, COLOR_CONTAINER_BG, COLOR_SURFACE_ELEVATED,COLOR_BORDER_SUBTLE,
+    COLOR_BACKGROUND, COLOR_SIDEBAR_BG, COLOR_CONTAINER_BG, COLOR_SURFACE_ELEVATED, COLOR_BORDER_SUBTLE,
     COLOR_PRIMARY, COLOR_HIGHLIGHT, COLOR_ACCENT, COLOR_TEXT_MAIN, COLOR_TEXT_MUTED,
     FONT_TITLE, FONT_HEADING, FONT_BODY, FONT_CODE, RADIUS_PREMIUM, RADIUS_PILL, PADDING_MEDIUM
 )
 from services.api_client import get_ai_response
+from ui.shared.markdown_parser import CTkMarkdownParser 
 
 class WorkspaceFrame(ctk.CTkFrame):
     def __init__(self, master):
@@ -15,12 +16,19 @@ class WorkspaceFrame(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)  
         self.grid_columnconfigure(1, weight=5)  
         
+        # Track active streaming animation and loader states
+        self.is_thinking = False
+        self.current_thinking_frame = None
+        
         self.MODEL_MAP = {
-            "OpenRouter: Poolside Laguna M.1": ("poolside/laguna-m.1", "openrouter"),
+            "OpenRouter: Auto Free Router": ("openrouter/free", "openrouter"),
+            "OpenRouter: Llama 3.3 70B (Free)": ("meta-llama/llama-3.3-70b-instruct:free", "openrouter"),
+            "OpenRouter: Gemma 4 31B (Free)": ("google/gemma-4-31b-it:free", "openrouter"),
             "OpenRouter: Qwen 3 Coder (Free)": ("qwen/qwen3-coder:free", "openrouter"),
             "OpenRouter: GPT-OSS 20B (Free)": ("openai/gpt-oss-20b:free", "openrouter"),
-            "Nvidia: Meta Llama 3 70B": ("meta/llama3-70b-instruct", "nvidia"),
-            "Nvidia: Mixtral 8x22B": ("mistralai/mixtral-8x22b-instruct-v0.1", "nvidia")
+            "OpenRouter: Nemotron 3 Ultra (Free)": ("nvidia/nemotron-3-ultra-550b-a55b:free", "openrouter"),
+            "OpenRouter: DeepSeek R1 (Free)": ("deepseek/deepseek-r1:free", "openrouter"),
+            "OpenRouter: Poolside Laguna M.1 (Free)": ("poolside/laguna-m.1:free", "openrouter")
         }
         
         self._build_sidebar()
@@ -93,26 +101,30 @@ class WorkspaceFrame(ctk.CTkFrame):
         )
         self.prompt_entry.grid(row=0, column=0, sticky="ew", padx=(25, 10), pady=12)
         
-        send_btn = ctk.CTkButton(
+        # UI Reference Bound instance element for active state toggles
+        self.send_btn = ctk.CTkButton(
             input_container, text="➔", font=FONT_HEADING, width=40, height=40, 
             corner_radius=20, fg_color=COLOR_HIGHLIGHT, hover_color="#E5D57F", 
             text_color="#000000", command=self.handle_send_message
         )
-        send_btn.grid(row=0, column=1, padx=(0, 12), pady=12)
+        self.send_btn.grid(row=0, column=1, padx=(0, 12), pady=12)
 
     def handle_send_message(self):
         user_text = self.prompt_entry.get().strip()
-        if not user_text:
+        if not user_text or self.is_thinking:
             return
             
         self.prompt_entry.delete(0, 'end')
         self._display_message("You", user_text, COLOR_HIGHLIGHT)
+        
+        self._show_thinking_indicator()
         
         threading.Thread(target=self._fetch_ai_response, args=(user_text,), daemon=True).start()
 
     def _fetch_ai_response(self, user_text):
         selected_option = self.model_dropdown.get()
         if selected_option not in self.MODEL_MAP:
+            self.after(0, self._hide_thinking_indicator)
             self._display_message("System", "Please select a valid AI model.", COLOR_ACCENT)
             return
             
@@ -122,6 +134,9 @@ class WorkspaceFrame(ctk.CTkFrame):
         response_dict = get_ai_response(messages, model_id, provider)
         content = response_dict.get("content", "")
         reasoning = response_dict.get("reasoning_details")
+
+        # Safely tear down loader frames before animating incoming stream response
+        self.after(0, self._hide_thinking_indicator)
 
         if isinstance(reasoning, list):
             reasoning_text = "\n".join([r.get("text", "") for r in reasoning if isinstance(r, dict)])
@@ -133,24 +148,62 @@ class WorkspaceFrame(ctk.CTkFrame):
             
         self._display_message("ALANX", content, COLOR_PRIMARY)
 
+    def _show_thinking_indicator(self):
+        """Creates an isolated temporary indicator and locks the send toggle."""
+        self.is_thinking = True
+        self.send_btn.configure(state="disabled", fg_color=COLOR_BORDER_SUBTLE)
+        
+        self.current_thinking_frame = ctk.CTkFrame(self.chat_display, fg_color="transparent")
+        self.current_thinking_frame.pack(fill="x", padx=10, pady=10)
+        
+        self.thinking_label = ctk.CTkLabel(
+            self.current_thinking_frame, text="ALANX is thinking", 
+            text_color=COLOR_TEXT_MUTED, font=("Helvetica", 14, "italic"), anchor="w"
+        )
+        self.thinking_label.pack(fill="x")
+        self.chat_display._parent_canvas.yview_moveto(1.0)
+        
+        self._animate_thinking_dots(0)
+
+    def _animate_thinking_dots(self, dot_count):
+        """Calculates dot loops at steady micro-intervals."""
+        if not self.is_thinking or not hasattr(self, 'thinking_label') or not self.thinking_label.winfo_exists():
+            return
+        dots = "." * (dot_count % 4)
+        self.thinking_label.configure(text=f"ALANX is thinking{dots}")
+        self.after(400, self._animate_thinking_dots, dot_count + 1)
+
+    def _hide_thinking_indicator(self):
+        """Destroys temporary loading frames safely on completion."""
+        if self.current_thinking_frame and self.current_thinking_frame.winfo_exists():
+            self.current_thinking_frame.destroy()
+        self.current_thinking_frame = None
+
     def _display_message(self, role, text, color):
         self.after(0, self._render_bubble, role, text, color)
 
     def _animate_typing(self, label, full_text, current_index=0):
-        """Recursively updates the label text to create a fast, smooth typing effect."""
         if current_index < len(full_text):
-            # Inject 3 characters per frame for a fast, natural typing speed
             chunk_size = 3
             next_index = min(current_index + chunk_size, len(full_text))
             
-            # Update the label with the new slice of text
             label.configure(text=full_text[:next_index])
-            
-            # Auto-scroll the chat view to the bottom as text appears
             self.chat_display._parent_canvas.yview_moveto(1.0)
-            
-            # Schedule the next frame in 10 milliseconds
             self.after(10, self._animate_typing, label, full_text, next_index)
+        else:
+            # Re-enable input systems precisely after typing animation wraps up
+            self.is_thinking = False
+            self.send_btn.configure(state="normal", fg_color=COLOR_HIGHLIGHT)
+            
+            # --- THE STREAM-TO-SNAP SWAP ---
+            parent_frame = label.master
+            label.destroy()  # Remove the raw text label
+            
+            # Snap in the beautifully parsed Markdown UI
+            parsed_view = CTkMarkdownParser(parent_frame, text=full_text)
+            parsed_view.pack(fill="x", pady=2)
+            
+            self.chat_display._parent_canvas.yview_moveto(1.0)
 
     def _render_bubble(self, role, text, color):
         msg_frame = ctk.CTkFrame(self.chat_display, fg_color="transparent")
@@ -163,26 +216,34 @@ class WorkspaceFrame(ctk.CTkFrame):
             text = text.get("content", str(text))
         text = str(text)
         
+        # We still split by code blocks (```) so Pygments can handle syntax highlighting later
         parts = text.split("```")
         for i, part in enumerate(parts):
             if not part.strip():
                 continue
                 
             if i % 2 == 0:
-                # Create an empty label first
+                # Standard text block mapping
                 lbl = ctk.CTkLabel(
                     msg_frame, text="", text_color=COLOR_TEXT_MAIN, 
                     font=FONT_BODY, justify="left", anchor="w", wraplength=650
                 )
                 lbl.pack(fill="x", pady=2)
+                lbl._associated_role = role
                 
-                # If ALANX is speaking, animate it. If You are speaking, show instantly.
-                if role == "ALANX" or role == "ALANX (Thinking Process)":
+                if role in ["ALANX", "ALANX (Thinking Process)", "System"]:
+                    # Stream AI text (it will snap to Markdown when finished)
                     self._animate_typing(lbl, part.strip())
                 else:
-                    lbl.configure(text=part.strip())
-                    self.chat_display._parent_canvas.yview_moveto(1.0) # Ensure user scroll
+                    # User messages skip streaming and snap to Markdown instantly
+                    lbl.destroy()
+                    parsed_view = CTkMarkdownParser(msg_frame, text=part.strip())
+                    parsed_view.pack(fill="x", pady=2)
+                    
+                    self.chat_display._parent_canvas.yview_moveto(1.0)
+                    self.send_btn.configure(state="normal", fg_color=COLOR_HIGHLIGHT)
             else:
+                # ... (Keep your exact existing code block generation here untouched) ...
                 lines = part.split('\n', 1)
                 lang = lines[0].strip() if len(lines) > 1 else ""
                 code_content = lines[1].strip() if len(lines) > 1 else part.strip()
