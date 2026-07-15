@@ -21,14 +21,23 @@ class WorkspaceFrame(ctk.CTkFrame):
         self.current_thinking_frame = None
         
         self.MODEL_MAP = {
+            # --- CATEGORY 2: STABLE & HIGHLY RESPONSIVE (FREE) ---
+            "Meta: Llama 3.2 3B Instruct (Stable)": ("meta-llama/llama-3.2-3b-instruct:free", "openrouter"),
+            "Google: Gemma 4 31B (Stable)": ("google/gemma-4-31b-it:free", "openrouter"),
+            "Google: Gemma 4 26B A4B (Stable)": ("google/gemma-4-26b-a4b-it:free", "openrouter"),
+            "NVIDIA: Nemotron 3 Nano 30B (Stable)": ("nvidia/nemotron-3-nano-30b-a3b:free", "openrouter"),
+            "NVIDIA: Nemotron Nano 12B VL (Stable)": ("nvidia/nemotron-nano-12b-2-vl:free", "openrouter"),
+            "NVIDIA: Nemotron Nano 9B V2 (Stable)": ("nvidia/nemotron-nano-9b-v2:free", "openrouter"),
+            
+            # --- CATEGORY 3: FLAGSHIPS [HEAVILY RATE-LIMITED] ---
+            "OpenAI: GPT-OSS 20B [RATE-LIMITED]": ("openai/gpt-oss-20b:free", "openrouter"),
+            "Meta: Llama 3.3 70B [RATE-LIMITED]": ("meta-llama/llama-3.3-70b-instruct:free", "openrouter"),
+            "NVIDIA: Nemotron 3 Super [RATE-LIMITED]": ("nvidia/nemotron-3-super:free", "openrouter"),
+            "Qwen: Qwen3 Next 80B [RATE-LIMITED]": ("qwen/qwen3-next-80b-a3b-instruct:free", "openrouter"),
+            "Qwen: Qwen3 Coder 480B [RATE-LIMITED]": ("qwen/qwen3-coder-480b-a35b:free", "openrouter"),
+            
+            # --- OPENROUTER AUTO-ROUTER (FALLBACK) ---
             "OpenRouter: Auto Free Router": ("openrouter/free", "openrouter"),
-            "OpenRouter: Llama 3.3 70B (Free)": ("meta-llama/llama-3.3-70b-instruct:free", "openrouter"),
-            "OpenRouter: Gemma 4 31B (Free)": ("google/gemma-4-31b-it:free", "openrouter"),
-            "OpenRouter: Qwen 3 Coder (Free)": ("qwen/qwen3-coder:free", "openrouter"),
-            "OpenRouter: GPT-OSS 20B (Free)": ("openai/gpt-oss-20b:free", "openrouter"),
-            "OpenRouter: Nemotron 3 Ultra (Free)": ("nvidia/nemotron-3-ultra-550b-a55b:free", "openrouter"),
-            "OpenRouter: DeepSeek R1 (Free)": ("deepseek/deepseek-r1:free", "openrouter"),
-            "OpenRouter: Poolside Laguna M.1 (Free)": ("poolside/laguna-m.1:free", "openrouter")
         }
         
         self._build_sidebar()
@@ -206,6 +215,37 @@ class WorkspaceFrame(ctk.CTkFrame):
             self.chat_display._parent_canvas.yview_moveto(1.0)
 
     def _render_bubble(self, role, text, color):
+        # --- 1. OPTIONAL THINKING ACCORDION DROPDOWN ---
+        if role == "ALANX (Thinking Process)":
+            msg_frame = ctk.CTkFrame(self.chat_display, fg_color="transparent")
+            msg_frame.pack(fill="x", padx=10, pady=4)
+            
+            # Use a mutable reference cell to lazy-load the layout frame on demand
+            content_box = [None]
+            
+            def toggle_thinking():
+                if toggle_btn.cget("text").startswith("▶"):
+                    toggle_btn.configure(text="▼ Hide Thinking Process", text_color=COLOR_PRIMARY)
+                    if not content_box[0]:
+                        # Dynamically instantiate the markdown view for the reasoning text
+                        content_box[0] = CTkMarkdownParser(msg_frame, text=text)
+                    content_box[0].pack(fill="x", padx=20, pady=5)
+                    self.chat_display._parent_canvas.yview_moveto(1.0)
+                else:
+                    toggle_btn.configure(text="▶ Show Thinking Process", text_color=COLOR_TEXT_MUTED)
+                    if content_box[0]:
+                        content_box[0].pack_forget()
+            
+            toggle_btn = ctk.CTkButton(
+                msg_frame, text="▶ Show Thinking Process", font=("Helvetica", 13, "italic"),
+                fg_color="transparent", text_color=COLOR_TEXT_MUTED,
+                hover_color=COLOR_SURFACE_ELEVATED, anchor="w", height=30, width=180,
+                corner_radius=6, command=toggle_thinking
+            )
+            toggle_btn.pack(anchor="w", pady=2)
+            return
+
+        # --- 2. STANDARD CHAT BUBBLE SYSTEM ---
         msg_frame = ctk.CTkFrame(self.chat_display, fg_color="transparent")
         msg_frame.pack(fill="x", padx=10, pady=10)
         
@@ -216,14 +256,12 @@ class WorkspaceFrame(ctk.CTkFrame):
             text = text.get("content", str(text))
         text = str(text)
         
-        # We still split by code blocks (```) so Pygments can handle syntax highlighting later
         parts = text.split("```")
         for i, part in enumerate(parts):
             if not part.strip():
                 continue
                 
             if i % 2 == 0:
-                # Standard text block mapping
                 lbl = ctk.CTkLabel(
                     msg_frame, text="", text_color=COLOR_TEXT_MAIN, 
                     font=FONT_BODY, justify="left", anchor="w", wraplength=650
@@ -231,19 +269,14 @@ class WorkspaceFrame(ctk.CTkFrame):
                 lbl.pack(fill="x", pady=2)
                 lbl._associated_role = role
                 
-                if role in ["ALANX", "ALANX (Thinking Process)", "System"]:
-                    # Stream AI text (it will snap to Markdown when finished)
+                if role in ["ALANX", "System"]:
                     self._animate_typing(lbl, part.strip())
                 else:
-                    # User messages skip streaming and snap to Markdown instantly
                     lbl.destroy()
                     parsed_view = CTkMarkdownParser(msg_frame, text=part.strip())
                     parsed_view.pack(fill="x", pady=2)
-                    
                     self.chat_display._parent_canvas.yview_moveto(1.0)
-                    self.send_btn.configure(state="normal", fg_color=COLOR_HIGHLIGHT)
             else:
-                # ... (Keep your exact existing code block generation here untouched) ...
                 lines = part.split('\n', 1)
                 lang = lines[0].strip() if len(lines) > 1 else ""
                 code_content = lines[1].strip() if len(lines) > 1 else part.strip()
