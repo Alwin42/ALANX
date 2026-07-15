@@ -1,22 +1,25 @@
+import os
 import requests
+from dotenv import load_dotenv
 
-# --- API Keys Configuration ---
-# You will replace these strings with your actual API keys later
-OPENROUTER_API_KEY = "your_openrouter_api_key_here"
-NVIDIA_API_KEY = "your_nvidia_api_key_here"
+load_dotenv()
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
 
 def get_ai_response(messages, model, provider="openrouter"):
-    """
-    Sends the chat history to the selected AI provider and returns the response.
-    'messages' should be a list of dictionaries, e.g., [{"role": "user", "content": "Hello!"}]
-    """
     if provider == "openrouter":
         url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "HTTP-Referer": "http://localhost", # Recommended by OpenRouter
+            "HTTP-Referer": "http://localhost",
             "X-Title": "ALANX Workspace",
             "Content-Type": "application/json"
+        }
+        payload = {
+            "model": model,
+            "messages": messages,
+            "reasoning": {"enabled": True}  # Enable chain-of-thought for OpenRouter
         }
     elif provider == "nvidia":
         url = "https://integrate.api.nvidia.com/v1/chat/completions"
@@ -24,28 +27,24 @@ def get_ai_response(messages, model, provider="openrouter"):
             "Authorization": f"Bearer {NVIDIA_API_KEY}",
             "Content-Type": "application/json"
         }
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False
+        }
     else:
-        return "Error: Unknown AI provider selected."
-
-    # The payload structure is identical for both!
-    payload = {
-        "model": model,
-        "messages": messages,
-        "stream": False # We can enable streaming later for typing effects
-    }
+        return {"content": "Error: Unknown AI provider selected.", "reasoning_details": None}
 
     try:
         response = requests.post(url, headers=headers, json=payload)
-        response.raise_for_status() # Raises an error for bad HTTP status codes
-        
+        response.raise_for_status()
         data = response.json()
-        return data['choices'][0]['message']['content']
         
-    except requests.exceptions.RequestException as e:
-        return f"Network or API Error: {str(e)}"
-    except KeyError:
-        return "Error: Unexpected response format from the API."
-
-# --- Quick Test (Optional) ---
-if __name__ == "__main__":
-    print("API Client initialized. Ready to send requests once keys are added.")
+        message_data = data['choices'][0]['message']
+        return {
+            "content": message_data.get("content", ""),
+            "reasoning_details": message_data.get("reasoning_details", None)
+        }
+        
+    except Exception as e:
+        return {"content": f"Network or API Error: {str(e)}", "reasoning_details": None}
