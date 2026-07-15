@@ -1,6 +1,6 @@
 import customtkinter as ctk
-from database import get_connection
-from config import BG_COLOR, YELLOW_ACCENT, PURPLE_ACCENT, PINK_ACCENT
+from core.database import get_connection
+from core.config import BG_COLOR, YELLOW_ACCENT, PURPLE_ACCENT, PINK_ACCENT
 
 class LoginFrame(ctk.CTkFrame):
     def __init__(self, master, on_login_success):

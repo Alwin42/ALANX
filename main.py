@@ -1,6 +1,6 @@
 import customtkinter as ctk
-from config import BG_COLOR
-from login_view import LoginFrame
+from core.config import BG_COLOR
+from ui.auth.login_view import LoginFrame
 from workspace_view import WorkspaceFrame
 
 class AlanxApp(ctk.CTk):
