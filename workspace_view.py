@@ -16,9 +16,11 @@ class WorkspaceFrame(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)  
         self.grid_columnconfigure(1, weight=5)  
         
-        # Track active streaming animation and loader states
+        # Track active streaming animation, loader states, and responsiveness
         self.is_thinking = False
         self.current_thinking_frame = None
+        self.is_first_message = True
+        self.message_labels = [] 
         
         self.MODEL_MAP = {
             # --- CATEGORY 2: STABLE & HIGHLY RESPONSIVE (FREE) ---
@@ -74,57 +76,113 @@ class WorkspaceFrame(ctk.CTkFrame):
 
     def _build_chat_area(self):
         chat_container = ctk.CTkFrame(
-            self, fg_color=COLOR_CONTAINER_BG, border_color=COLOR_PRIMARY, 
+            self, fg_color=COLOR_CONTAINER_BG, border_color=COLOR_BORDER_SUBTLE, 
             border_width=1, corner_radius=RADIUS_PREMIUM
         )
         chat_container.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
         
-        chat_container.grid_rowconfigure(0, weight=1)   
-        chat_container.grid_rowconfigure(1, weight=12)  
-        chat_container.grid_rowconfigure(2, weight=2)   
+        # Refined row weights for better expansion
+        chat_container.grid_rowconfigure(0, weight=0)   
+        chat_container.grid_rowconfigure(1, weight=1)  
+        chat_container.grid_rowconfigure(2, weight=0)   
         chat_container.grid_columnconfigure(0, weight=1)
+        
+        # --- 1. Minimalist Header ---
+        header_frame = ctk.CTkFrame(chat_container, fg_color="transparent")
+        header_frame.grid(row=0, column=0, sticky="ew", padx=30, pady=(25, 10))
+        header_frame.grid_columnconfigure(1, weight=1)
         
         models = list(self.MODEL_MAP.keys())
         
         self.model_dropdown = ctk.CTkOptionMenu(
-            chat_container, values=models, fg_color=COLOR_SURFACE_ELEVATED,      
+            header_frame, values=models, fg_color=COLOR_SURFACE_ELEVATED,      
             button_color=COLOR_SURFACE_ELEVATED, button_hover_color=COLOR_BORDER_SUBTLE, 
             text_color=COLOR_TEXT_MAIN, font=FONT_HEADING, 
             dropdown_fg_color=COLOR_SURFACE_ELEVATED, dropdown_text_color=COLOR_TEXT_MAIN,
-            corner_radius=8
+            corner_radius=8, width=320, dynamic_resizing=False
         )
-        self.model_dropdown.grid(row=0, column=0, sticky="nw", padx=30, pady=25)
+        self.model_dropdown.grid(row=0, column=0, sticky="w")
+
+        # System Status Indicator
+        self.status_indicator = ctk.CTkLabel(
+            header_frame, text="● System Ready", text_color=COLOR_HIGHLIGHT, font=FONT_BODY
+        )
+        self.status_indicator.grid(row=0, column=1, sticky="e", padx=10)
         
+        # --- 2. Responsive Chat Display ---
         self.chat_display = ctk.CTkScrollableFrame(chat_container, fg_color="transparent")
-        self.chat_display.grid(row=1, column=0, sticky="nsew", padx=30, pady=(0, 15))
+        self.chat_display.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 15))
+        self.chat_display.bind("<Configure>", self._on_chat_resize)
         
-        input_container = ctk.CTkFrame(chat_container, fg_color=COLOR_SURFACE_ELEVATED, corner_radius=RADIUS_PILL, height=64)
+        # --- 3. Polished Input Area ---
+        input_container = ctk.CTkFrame(
+            chat_container, fg_color=COLOR_SURFACE_ELEVATED, 
+            corner_radius=RADIUS_PILL, border_width=1, border_color=COLOR_BORDER_SUBTLE
+        )
+        # Removed fixed height; relies on internal padding for dynamic scaling
         input_container.grid(row=2, column=0, sticky="ew", padx=30, pady=(0, 30))
         input_container.grid_columnconfigure(0, weight=1)
-        input_container.grid_propagate(False) 
         
         self.prompt_entry = ctk.CTkEntry(
             input_container, placeholder_text="Ask ALANX anything...", 
             fg_color="transparent", border_width=0, text_color=COLOR_TEXT_MAIN, 
-            font=FONT_BODY, placeholder_text_color=COLOR_TEXT_MUTED
+            font=FONT_BODY, placeholder_text_color=COLOR_TEXT_MUTED, height=45
         )
-        self.prompt_entry.grid(row=0, column=0, sticky="ew", padx=(25, 10), pady=12)
+        self.prompt_entry.grid(row=0, column=0, sticky="ew", padx=(25, 10), pady=10)
         
-        # UI Reference Bound instance element for active state toggles
+        # Input focus highlighting
+        self.prompt_entry.bind("<FocusIn>", lambda e: input_container.configure(border_color=COLOR_PRIMARY))
+        self.prompt_entry.bind("<FocusOut>", lambda e: input_container.configure(border_color=COLOR_BORDER_SUBTLE))
+        self.prompt_entry.bind("<Return>", lambda e: self.handle_send_message())
+        
         self.send_btn = ctk.CTkButton(
             input_container, text="➔", font=FONT_HEADING, width=40, height=40, 
             corner_radius=20, fg_color=COLOR_HIGHLIGHT, hover_color="#E5D57F", 
             text_color="#000000", command=self.handle_send_message
         )
-        self.send_btn.grid(row=0, column=1, padx=(0, 12), pady=12)
+        self.send_btn.grid(row=0, column=1, padx=(0, 12), pady=10)
+
+        # Initialize the landing view
+        self._show_empty_state()
+
+    def _show_empty_state(self):
+        """Renders a premium, minimalist greeting before the first message."""
+        self.empty_state_frame = ctk.CTkFrame(self.chat_display, fg_color="transparent")
+        self.empty_state_frame.pack(expand=True, fill="both", pady=80)
+        
+        welcome_lbl = ctk.CTkLabel(
+            self.empty_state_frame, text="How can I help you today?", 
+            font=FONT_TITLE, text_color=COLOR_TEXT_MAIN
+        )
+        welcome_lbl.pack(pady=(0, 10))
+        
+        sub_lbl = ctk.CTkLabel(
+            self.empty_state_frame, text="Your local workspace is ready and connected.", 
+            font=FONT_BODY, text_color=COLOR_TEXT_MUTED
+        )
+        sub_lbl.pack()
+
+    def _on_chat_resize(self, event):
+        """Dynamically calculates and applies wraplength based on window size."""
+        # Calculate optimal wrap length (leave room for scrollbar and padding)
+        new_wraplength = max(350, event.width - 120)
+        for lbl in self.message_labels:
+            if lbl.winfo_exists():
+                lbl.configure(wraplength=new_wraplength)
 
     def handle_send_message(self):
         user_text = self.prompt_entry.get().strip()
         if not user_text or self.is_thinking:
             return
             
+        # Tear down empty state on first interaction
+        if self.is_first_message:
+            if hasattr(self, 'empty_state_frame') and self.empty_state_frame.winfo_exists():
+                self.empty_state_frame.destroy()
+            self.is_first_message = False
+            
         self.prompt_entry.delete(0, 'end')
-        self._display_message("You", user_text, COLOR_HIGHLIGHT)
+        self._display_message("You", user_text, COLOR_TEXT_MAIN)
         
         self._show_thinking_indicator()
         
@@ -144,7 +202,6 @@ class WorkspaceFrame(ctk.CTkFrame):
         content = response_dict.get("content", "")
         reasoning = response_dict.get("reasoning_details")
 
-        # Safely tear down loader frames before animating incoming stream response
         self.after(0, self._hide_thinking_indicator)
 
         if isinstance(reasoning, list):
@@ -158,16 +215,16 @@ class WorkspaceFrame(ctk.CTkFrame):
         self._display_message("ALANX", content, COLOR_PRIMARY)
 
     def _show_thinking_indicator(self):
-        """Creates an isolated temporary indicator and locks the send toggle."""
         self.is_thinking = True
         self.send_btn.configure(state="disabled", fg_color=COLOR_BORDER_SUBTLE)
+        self.status_indicator.configure(text="● Processing...", text_color=COLOR_ACCENT)
         
         self.current_thinking_frame = ctk.CTkFrame(self.chat_display, fg_color="transparent")
         self.current_thinking_frame.pack(fill="x", padx=10, pady=10)
         
         self.thinking_label = ctk.CTkLabel(
             self.current_thinking_frame, text="ALANX is thinking", 
-            text_color=COLOR_TEXT_MUTED, font=("Helvetica", 14, "italic"), anchor="w"
+            text_color=COLOR_TEXT_MUTED, font=FONT_BODY, anchor="w"
         )
         self.thinking_label.pack(fill="x")
         self.chat_display._parent_canvas.yview_moveto(1.0)
@@ -175,7 +232,6 @@ class WorkspaceFrame(ctk.CTkFrame):
         self._animate_thinking_dots(0)
 
     def _animate_thinking_dots(self, dot_count):
-        """Calculates dot loops at steady micro-intervals."""
         if not self.is_thinking or not hasattr(self, 'thinking_label') or not self.thinking_label.winfo_exists():
             return
         dots = "." * (dot_count % 4)
@@ -183,10 +239,10 @@ class WorkspaceFrame(ctk.CTkFrame):
         self.after(400, self._animate_thinking_dots, dot_count + 1)
 
     def _hide_thinking_indicator(self):
-        """Destroys temporary loading frames safely on completion."""
         if self.current_thinking_frame and self.current_thinking_frame.winfo_exists():
             self.current_thinking_frame.destroy()
         self.current_thinking_frame = None
+        self.status_indicator.configure(text="● System Ready", text_color=COLOR_HIGHLIGHT)
 
     def _display_message(self, role, text, color):
         self.after(0, self._render_bubble, role, text, color)
@@ -200,15 +256,17 @@ class WorkspaceFrame(ctk.CTkFrame):
             self.chat_display._parent_canvas.yview_moveto(1.0)
             self.after(10, self._animate_typing, label, full_text, next_index)
         else:
-            # Re-enable input systems precisely after typing animation wraps up
             self.is_thinking = False
             self.send_btn.configure(state="normal", fg_color=COLOR_HIGHLIGHT)
             
-            # --- THE STREAM-TO-SNAP SWAP ---
             parent_frame = label.master
-            label.destroy()  # Remove the raw text label
             
-            # Snap in the beautifully parsed Markdown UI
+            # Clean up tracking list before destroying
+            if label in self.message_labels:
+                self.message_labels.remove(label)
+                
+            label.destroy() 
+            
             parsed_view = CTkMarkdownParser(parent_frame, text=full_text)
             parsed_view.pack(fill="x", pady=2)
             
@@ -220,14 +278,12 @@ class WorkspaceFrame(ctk.CTkFrame):
             msg_frame = ctk.CTkFrame(self.chat_display, fg_color="transparent")
             msg_frame.pack(fill="x", padx=10, pady=4)
             
-            # Use a mutable reference cell to lazy-load the layout frame on demand
             content_box = [None]
             
             def toggle_thinking():
                 if toggle_btn.cget("text").startswith("▶"):
                     toggle_btn.configure(text="▼ Hide Thinking Process", text_color=COLOR_PRIMARY)
                     if not content_box[0]:
-                        # Dynamically instantiate the markdown view for the reasoning text
                         content_box[0] = CTkMarkdownParser(msg_frame, text=text)
                     content_box[0].pack(fill="x", padx=20, pady=5)
                     self.chat_display._parent_canvas.yview_moveto(1.0)
@@ -237,7 +293,7 @@ class WorkspaceFrame(ctk.CTkFrame):
                         content_box[0].pack_forget()
             
             toggle_btn = ctk.CTkButton(
-                msg_frame, text="▶ Show Thinking Process", font=("Helvetica", 13, "italic"),
+                msg_frame, text="▶ Show Thinking Process", font=FONT_BODY,
                 fg_color="transparent", text_color=COLOR_TEXT_MUTED,
                 hover_color=COLOR_SURFACE_ELEVATED, anchor="w", height=30, width=180,
                 corner_radius=6, command=toggle_thinking
@@ -247,45 +303,75 @@ class WorkspaceFrame(ctk.CTkFrame):
 
         # --- 2. STANDARD CHAT BUBBLE SYSTEM ---
         msg_frame = ctk.CTkFrame(self.chat_display, fg_color="transparent")
-        msg_frame.pack(fill="x", padx=10, pady=10)
+        msg_frame.pack(fill="x", padx=10, pady=12)
         
-        role_lbl = ctk.CTkLabel(msg_frame, text=f"{role}:", text_color=color, font=("Helvetica", 15, "bold"), anchor="w")
-        role_lbl.pack(fill="x", pady=(0, 5))
+        # User vs AI Visual Hierarchy
+        if role == "You":
+            # Distinct user bubble presentation (slightly inset, distinct background card)
+            content_wrapper = ctk.CTkFrame(
+                msg_frame, fg_color=COLOR_SURFACE_ELEVATED, 
+                corner_radius=12, border_width=1, border_color=COLOR_BORDER_SUBTLE
+            )
+            # Align right by padding the left side heavily if desired, or keep it standard left with distinct card background
+            content_wrapper.pack(anchor="e", fill="x", padx=(40, 0), pady=2) 
+            
+            role_lbl = ctk.CTkLabel(content_wrapper, text="You", text_color=COLOR_TEXT_MUTED, font=FONT_HEADING, anchor="w")
+            role_lbl.pack(fill="x", padx=15, pady=(10, 2))
+            
+            parent_for_content = content_wrapper
+            align_kwargs = {"padx": 15, "pady": (0, 10)}
+        else:
+            # AI messages are flush and clean
+            role_lbl = ctk.CTkLabel(msg_frame, text=role, text_color=color, font=FONT_HEADING, anchor="w")
+            role_lbl.pack(fill="x", pady=(0, 5))
+            
+            parent_for_content = msg_frame
+            align_kwargs = {"padx": 0, "pady": 2}
         
         if isinstance(text, dict):
             text = text.get("content", str(text))
         text = str(text)
         
         parts = text.split("```")
+        
+        # Get current canvas width for immediate wraplength calculation
+        current_width = self.chat_display.winfo_width()
+        active_wraplength = max(350, current_width - 120) if current_width > 120 else 650
+
         for i, part in enumerate(parts):
             if not part.strip():
                 continue
                 
             if i % 2 == 0:
                 lbl = ctk.CTkLabel(
-                    msg_frame, text="", text_color=COLOR_TEXT_MAIN, 
-                    font=FONT_BODY, justify="left", anchor="w", wraplength=650
+                    parent_for_content, text="", text_color=COLOR_TEXT_MAIN, 
+                    font=FONT_BODY, justify="left", anchor="w", wraplength=active_wraplength
                 )
-                lbl.pack(fill="x", pady=2)
+                lbl.pack(fill="x", **align_kwargs)
                 lbl._associated_role = role
+                self.message_labels.append(lbl) # Track for resizing
                 
                 if role in ["ALANX", "System"]:
                     self._animate_typing(lbl, part.strip())
                 else:
                     lbl.destroy()
-                    parsed_view = CTkMarkdownParser(msg_frame, text=part.strip())
-                    parsed_view.pack(fill="x", pady=2)
+                    parsed_view = CTkMarkdownParser(parent_for_content, text=part.strip())
+                    parsed_view.pack(fill="x", **align_kwargs)
                     self.chat_display._parent_canvas.yview_moveto(1.0)
             else:
                 lines = part.split('\n', 1)
                 lang = lines[0].strip() if len(lines) > 1 else ""
                 code_content = lines[1].strip() if len(lines) > 1 else part.strip()
                 
-                code_container = ctk.CTkFrame(msg_frame, fg_color="#1E1E1E", corner_radius=8, border_width=1, border_color=COLOR_BORDER_SUBTLE)
+                # Polished Code Block matching the new dark theme
+                code_container = ctk.CTkFrame(
+                    parent_for_content, fg_color="#0A0A0A", corner_radius=8, 
+                    border_width=1, border_color=COLOR_BORDER_SUBTLE
+                )
                 code_container.pack(fill="x", padx=10, pady=5)
                 
                 if lang:
-                    lang_lbl = ctk.CTkLabel(code_container, text=lang, text_color=COLOR_TEXT_MUTED, font=("Helvetica", 12, "italic"), anchor="w")
+                    lang_lbl = ctk.CTkLabel(code_container, text=lang, text_color=COLOR_TEXT_MUTED, font=FONT_BODY, anchor="w")
                     lang_lbl.pack(fill="x", padx=10, pady=(5, 0))
                 
                 line_count = len(code_content.split('\n'))
